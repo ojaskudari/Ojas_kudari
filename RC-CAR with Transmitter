@@ -1,0 +1,169 @@
+#include <EnableInterrupt.h>
+
+#define SERIAL_PORT_SPEED 57600
+#define RC_NUM_CHANNELS  4
+
+#define RC_CH1  0
+#define RC_CH2  1
+#define RC_CH3  2
+#define RC_CH4  3
+
+#define RC_CH2_INPUT  A1
+#define RC_CH4_INPUT  A3
+
+// Variables Defined
+#define pos_ch2_centre 1492 //value here 
+#define pos_ch4_centre 1480 //value here 
+#define tolerance 10
+
+// Control Pins
+#define RC_IN1 4
+#define RC_IN2 7
+#define RC_IN3 8
+#define RC_IN4 11
+
+// PWM Pins
+#define RC_PWM_A 5
+#define RC_PWM_B 6
+
+uint16_t rc_values[RC_NUM_CHANNELS];
+uint32_t rc_start[RC_NUM_CHANNELS];
+volatile uint16_t rc_shared[RC_NUM_CHANNELS];
+
+void rc_read_values() {
+  noInterrupts();
+  memcpy(rc_values, (const void *)rc_shared, sizeof(rc_shared));
+  interrupts();
+}
+
+void calc_input(uint8_t channel, uint8_t input_pin) {
+  if (digitalRead(input_pin) == HIGH) {
+    rc_start[channel] = micros();
+  } else {
+    uint16_t rc_compare = (uint16_t)(micros() - rc_start[channel]);
+    rc_shared[channel] = rc_compare;
+  }
+}
+
+void calc_ch2() { calc_input(RC_CH2, RC_CH2_INPUT); }
+void calc_ch4() { calc_input(RC_CH4, RC_CH4_INPUT); }
+
+String state(int RC_ch2, int RC_ch4) {
+  // Normalize the input rc value
+  if (abs(RC_ch2 - pos_ch2_centre) <= tolerance && abs(RC_ch4 - pos_ch4_centre) <= tolerance) {
+    return "STOP";
+  }
+  else if (RC_ch2 <= pos_ch2_centre && abs(RC_ch4 - pos_ch4_centre) <= tolerance) {
+    return "BACK";
+  }
+  else if (RC_ch2 >= pos_ch2_centre && abs(RC_ch4 - pos_ch4_centre) <= tolerance) {
+    return "FORWARD";
+  }
+  else if (abs(RC_ch2 - pos_ch2_centre) <= tolerance && RC_ch4 <= pos_ch4_centre) {
+    return "LEFT";
+  }
+  else if (abs(RC_ch2 - pos_ch2_centre) <= tolerance && RC_ch4 >= pos_ch4_centre) {
+    return "RIGHT";
+  }
+  else {
+    return "DO_NOTHING";
+  }
+}
+
+void setup() {
+  Serial.begin(SERIAL_PORT_SPEED);
+
+  // Initialize channel inputs
+  pinMode(RC_CH2_INPUT, INPUT);
+  pinMode(RC_CH4_INPUT, INPUT);
+
+  // Initialize motor to stop
+  digitalWrite(RC_IN1, LOW);
+  digitalWrite(RC_IN2, LOW);
+  digitalWrite(RC_IN3, LOW);
+  digitalWrite(RC_IN4, LOW);
+  analogWrite(RC_PWM_A, 0);
+  analogWrite(RC_PWM_B, 0);
+
+  // Interrupts
+  enableInterrupt(RC_CH2_INPUT, calc_ch2, CHANGE);
+  enableInterrupt(RC_CH4_INPUT, calc_ch4, CHANGE);
+}
+
+void loop() {
+  rc_read_values();
+
+  // Read the analog values
+  Serial.print("CH2:"); Serial.print(rc_values[RC_CH2]); Serial.print("\t");
+  Serial.print("CH4:"); Serial.println(rc_values[RC_CH4]);
+
+  // Code Starts here
+
+  String controlState = state( rc_values[RC_CH2] , rc_values[RC_CH4] );
+  Serial.print(controlState); Serial.print("\n");
+
+  // int pwm_ch2 = map(rc_values[RC_CH2], 1000, 2000, 0, 255); //1000 and 2000 are examples
+  // int pwm_ch4 = map(rc_values[RC_CH4], 1000, 2000, 0, 255); //1000 and 2000 are examples
+
+  if (strcmp(controlState.c_str(), "FORWARD") == 0) {
+    digitalWrite(RC_IN1, HIGH);
+    digitalWrite(RC_IN2, LOW);
+    digitalWrite(RC_IN3, HIGH);
+    digitalWrite(RC_IN4, LOW);
+    int pwm_a = map(rc_values[RC_CH2], pos_ch2_centre - tolerance, 1840, 0, 255);
+    int pwm_b = pwm_a;
+    Serial.print(pwm_a); Serial.print("\n");
+    Serial.print(pwm_b); Serial.print("\n");
+
+    analogWrite(RC_PWM_A, pwm_a);
+    analogWrite(RC_PWM_B, pwm_b);
+  } 
+  else if (strcmp(controlState.c_str(), "BACK") == 0) {
+    digitalWrite(RC_IN1, LOW);
+    digitalWrite(RC_IN2, HIGH);
+    digitalWrite(RC_IN3, LOW);
+    digitalWrite(RC_IN4, HIGH);
+    int pwm_a = map(rc_values[RC_CH2], 1190 , pos_ch2_centre + tolerance, 255, 0);
+    int pwm_b = map(rc_values[RC_CH2], 1190 , pos_ch2_centre + tolerance, 255, 0);
+    Serial.print(pwm_a); Serial.print("\n");
+    Serial.print(pwm_b); Serial.print("\n");
+    analogWrite(RC_PWM_A, pwm_a);
+    analogWrite(RC_PWM_B, pwm_b);
+  } 
+  else if (strcmp(controlState.c_str(), "RIGHT") == 0) {
+    digitalWrite(RC_IN1, HIGH);
+    digitalWrite(RC_IN2, LOW);
+    digitalWrite(RC_IN3, LOW);
+    digitalWrite(RC_IN4, HIGH);
+    int pwm_a = map(rc_values[RC_CH4], 1875 , pos_ch4_centre + tolerance, 255, 0);
+    int pwm_b = map(rc_values[RC_CH4], 1875 , pos_ch4_centre + tolerance, 255, 0);
+    Serial.print(pwm_a); Serial.print("\n");
+    Serial.print(pwm_b); Serial.print("\n");
+    analogWrite(RC_PWM_A, pwm_a);
+    analogWrite(RC_PWM_B, pwm_b);
+  } 
+  else if (strcmp(controlState.c_str(), "LEFT") == 0) {
+    digitalWrite(RC_IN1, LOW);
+    digitalWrite(RC_IN2, HIGH);
+    digitalWrite(RC_IN3, HIGH);
+    digitalWrite(RC_IN4, LOW);
+    int pwm_a = map(rc_values[RC_CH4], pos_ch4_centre - tolerance, 1093, 0, 255);
+    int pwm_b = map(rc_values[RC_CH4], pos_ch4_centre - tolerance, 1093, 0, 255);
+    Serial.print(pwm_a); Serial.print("\n");
+    Serial.print(pwm_b); Serial.print("\n");
+    analogWrite(RC_PWM_A, pwm_a);
+    analogWrite(RC_PWM_B, pwm_b);
+  } 
+  else if (strcmp(controlState.c_str(), "STOP") == 0) {
+    digitalWrite(RC_IN1, LOW);
+    digitalWrite(RC_IN2, LOW);
+    digitalWrite(RC_IN3, LOW);
+    digitalWrite(RC_IN4, LOW);
+    analogWrite(RC_PWM_A, 0);
+    analogWrite(RC_PWM_B, 0);
+  } 
+  else {
+    //no code here 
+  }
+  delay(2);
+}
